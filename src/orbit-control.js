@@ -34,7 +34,7 @@ export class OrbitControl {
 
     update() {
         if (this.pointerDown) {
-            const damping = 10;
+            const damping = 2;
             this.followPos.x += (this.pointerPos.x - this.followPos.x) / damping;
             this.followPos.y += (this.pointerPos.y - this.followPos.y) / damping;
 

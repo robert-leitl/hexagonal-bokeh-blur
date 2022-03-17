@@ -6,6 +6,7 @@ import drawFragShaderSource from './shader/draw.frag';
 import compositeVertShaderSource from './shader/composite.vert';
 import compositeFragShaderSource from './shader/composite.frag';
 import { OrbitControl } from './orbit-control';
+import { simplex2 } from './noise';
 
 export class HexagonalBokeh {
     oninit;
@@ -90,7 +91,7 @@ export class HexagonalBokeh {
         gl.uniform3f(this.drawLocations.u_cameraPosition, this.camera.position[0], this.camera.position[1], this.camera.position[2]);
         gl.clearBufferfv(gl.COLOR, 0, [0.0, 0.0, 0.0, 0.0]);
         gl.clearBufferfv(gl.DEPTH, 0, [1.]);
-        gl.drawArrays(gl.TRIANGLES, 0, this.objectBuffers.numElem);
+        gl.drawElements(gl.TRIANGLES, this.objectBuffers.numElem, gl.UNSIGNED_SHORT, 0);
         this.#setFramebuffer(gl, null, gl.drawingBufferWidth, gl.drawingBufferHeight);
 
         // blit depth and color
@@ -157,47 +158,31 @@ export class HexagonalBokeh {
             u_projectionMatrix: mat4.create(),
             u_worldInverseTransposeMatrix: mat4.create()
         };
+        mat4.rotate(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, 90, [1, 0, 0]);
         mat4.scale(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, [50, 50, 50]);
         mat4.translate(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, [0, 0, 0]);
 
         /////////////////////////////////// GEOMETRY / MESH SETUP
 
         // create object VAO
-        const objectPositions = [
-            -1, -1, 0,
-            1, -1, 0,
-            -1, 1, 0,
-            -1, 1, 0,
-            1, -1, 0,
-            1, 1, 0
-        ];
-        const objectNormals = [
-            0, 0, 1,
-            0, 0, 1,
-            0, 0, 1,
-            0, 0, 1,
-            0, 0, 1,
-            0, 0, 1,
-        ];
-        const objectUVs = [
-            0, 0,
-            1, 0,
-            0, 1,
-            0, 1,
-            1, 0,
-            1, 1
-        ];
+        this.objectGeometry = this.#createXYPlaneGeometry(8, 8, 140, 140, (p) => {
+            const scale = .8;
+            const maxHeight = .2;
+            const n = simplex2(p.x * scale, p.y * scale);
+            return {x: p.x, y: p.y, z: n * maxHeight} 
+        });
+        console.log(this.objectGeometry);
         this.objectBuffers = { 
-            position: this.#createBuffer(gl, objectPositions),
-            normal: this.#createBuffer(gl, objectNormals),
-            uv: this.#createBuffer(gl, objectUVs),
-            numElem: objectPositions.length / 3
+            position: this.#createBuffer(gl, this.objectGeometry.vertices),
+            normal: this.#createBuffer(gl, this.objectGeometry.normals),
+            uv: this.#createBuffer(gl, this.objectGeometry.uvs),
+            numElem: this.objectGeometry.count
         };
         this.objectVAO = this.#makeVertexArray(gl, [
             [this.objectBuffers.position, this.drawLocations.a_position, 3],
             [this.objectBuffers.normal, this.drawLocations.a_normal, 3],
             [this.objectBuffers.uv, this.drawLocations.a_uv, 2]
-        ]);
+        ], this.objectGeometry.indices);
 
         // create quad VAO
         const quadPositions = [
@@ -276,6 +261,90 @@ export class HexagonalBokeh {
         if (this.oninit) this.oninit(this);
     }
 
+    #createXYPlaneGeometry(w, h, wSegments, hSegments, distort) {
+        let sx = -w / 2;
+        let sy = -h / 2;
+        const dx = w / wSegments;
+        const dy = h / hSegments;
+        const count = wSegments * hSegments * 6;
+        const vertices = [];
+        const normals = [];
+        const uvs = [];
+        const indices = [];
+        const wOff = wSegments + 1;
+        const dd = Math.min(dx, dy) * .1;
+
+        for(let iy = 0; iy <= hSegments; ++iy) {
+            for(let ix = 0; ix <= wSegments; ++ix) {
+                let p = {
+                    x: sx + dx * ix,
+                    y: sy + dy * iy,
+                    z: 0
+                };
+                let n = {x: 0, y: 0, z: 1};
+
+                if (distort) {
+                    let x1 = {...p};
+                    let x2 = {...p};
+                    let y1 = {...p};
+                    let y2 = {...p};
+                    x1.x -= dd;
+                    x2.x += dd;
+                    y1.y -= dd;
+                    y2.y += dd;
+                    x1 = distort(x1);
+                    x2 = distort(x2);
+                    y1 = distort(y1);
+                    y2 = distort(y2);
+                    t = vec3.fromValues(
+                        x2.x - x1.x,
+                        x2.y - x1.y,
+                        x2.z - x1.z
+                    );
+                    b = vec3.fromValues(
+                        y2.x - y1.x,
+                        y2.y - y1.y,
+                        y2.z - y1.z
+                    );
+                    const normal = vec3.cross(vec3.create(), t, b);
+                    vec3.normalize(normal, normal);
+                    n.x = normal[0];
+                    n.y = normal[1];
+                    n.z = normal[2];
+
+                    p = distort(p);
+                }
+
+                vertices.push(p.x, p.y, p.z);
+                normals.push(n.x, n.y, n.z);
+                uvs.push(ix / wSegments, iy / hSegments);
+            }
+        }
+
+        for(let iy = 0; iy < hSegments; ++iy) {
+            for(let ix = 0; ix < wSegments; ++ix) {
+                indices.push(
+                    iy * wOff + ix,
+                    iy * wOff + ix + 1,
+                    (iy + 1) * wOff + ix + 1
+                );
+                indices.push(
+                    (iy + 1) * wOff + ix + 1,
+                    (iy + 1) * wOff + ix,
+                    iy * wOff + ix
+                );
+            }
+        }
+
+        return {
+            vertices,
+            normals,
+            uvs,
+            indices,
+            count
+        };
+    }
+
     #createBuffer(gl, data) {
         const buffer = this.gl.createBuffer();
         gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -323,7 +392,9 @@ export class HexagonalBokeh {
             );
         }
         if (indices) {
-            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indices);
+            const indexBuffer = gl.createBuffer();
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(indices), gl.STATIC_DRAW);
         }
         gl.bindVertexArray(null);
         return va;

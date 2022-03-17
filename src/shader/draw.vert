@@ -10,7 +10,7 @@ in vec3 a_position;
 in vec3 a_normal;
 in vec2 a_uv;
 
-flat out vec3 v_normal;
+out vec3 v_normal;
 out vec2 v_uv;
 out vec3 v_surfaceToView;
 
