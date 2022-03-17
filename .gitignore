@@ -102,3 +102,11 @@ dist
 
 # TernJS port file
 .tern-port
+
+# Parcel.js cache folder
+.parcel-cache
+
+
+docs
+.idea
+.DS_Store
