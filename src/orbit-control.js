@@ -34,7 +34,7 @@ export class OrbitControl {
 
     update() {
         if (this.pointerDown) {
-            const damping = 2;
+            const damping = 10;
             this.followPos.x += (this.pointerPos.x - this.followPos.x) / damping;
             this.followPos.y += (this.pointerPos.y - this.followPos.y) / damping;
 
@@ -55,11 +55,12 @@ export class OrbitControl {
         this.camera.rotation[0] -= this.theta;
         this.camera.rotation[1] -= this.phi;
 
-        const thetaLimit = 80;
-        if (this.camera.rotation[0] > thetaLimit) {
-            this.camera.rotation[0] = thetaLimit;
-        } else if (this.camera.rotation[0] < -thetaLimit) {
-            this.camera.rotation[0] = -thetaLimit;
+        const thetaLimitUp = -10;
+        const thetaLimitDown = -10;
+        if (this.camera.rotation[0] > thetaLimitUp) {
+            this.camera.rotation[0] = thetaLimitUp;
+        } else if (this.camera.rotation[0] < thetaLimitDown) {
+            this.camera.rotation[0] = thetaLimitDown;
         }
 
         quat.fromEuler(this.camera.orbit, this.camera.rotation[0], this.camera.rotation[1], this.camera.rotation[2]);

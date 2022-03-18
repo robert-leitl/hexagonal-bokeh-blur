@@ -7,6 +7,7 @@ import compositeVertShaderSource from './shader/composite.vert';
 import compositeFragShaderSource from './shader/composite.frag';
 import { OrbitControl } from './orbit-control';
 import { simplex2 } from './noise';
+import WorleyNoise from './worley-noise';
 
 export class HexagonalBokeh {
     oninit;
@@ -158,20 +159,26 @@ export class HexagonalBokeh {
             u_projectionMatrix: mat4.create(),
             u_worldInverseTransposeMatrix: mat4.create()
         };
-        mat4.rotate(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, 90, [1, 0, 0]);
+        mat4.rotate(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, -Math.PI / 2, [1, 0, 0]);
         mat4.scale(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, [50, 50, 50]);
         mat4.translate(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, [0, 0, 0]);
 
         /////////////////////////////////// GEOMETRY / MESH SETUP
 
         // create object VAO
-        this.objectGeometry = this.#createXYPlaneGeometry(8, 8, 140, 140, (p) => {
-            const scale = .8;
-            const maxHeight = .2;
+        const wNoise = new WorleyNoise({numPoints: 30});
+        const size = 8;
+        this.objectGeometry = this.#createXYPlaneGeometry(size, size, 100, 100, (p) => {
+            const maxHeight = 0.4;
+            const scale = 0.9;
             const n = simplex2(p.x * scale, p.y * scale);
-            return {x: p.x, y: p.y, z: n * maxHeight} 
+            const wn = wNoise.getEuclidean({ x: (p.x + (size / 2)) / size, y: (p.y + (size / 2)) / size }, 1);
+            const l = vec3.length([p.x, p.y, p.z]);
+            let lw = (l / 4) * 1.;
+            //lw *= lw * lw;
+            const c = Math.sin(Math.acos(p.x / 5)) * Math.cos(Math.asin(p.y / 5));
+            return {x: p.x, y: p.y, z: n * maxHeight * lw - c * 6.5 + 5.3 } 
         });
-        console.log(this.objectGeometry);
         this.objectBuffers = { 
             position: this.#createBuffer(gl, this.objectGeometry.vertices),
             normal: this.#createBuffer(gl, this.objectGeometry.normals),
@@ -272,7 +279,7 @@ export class HexagonalBokeh {
         const uvs = [];
         const indices = [];
         const wOff = wSegments + 1;
-        const dd = Math.min(dx, dy) * .1;
+        const dd = Math.min(dx, dy) * 0.5;
 
         for(let iy = 0; iy <= hSegments; ++iy) {
             for(let ix = 0; ix <= wSegments; ++ix) {
