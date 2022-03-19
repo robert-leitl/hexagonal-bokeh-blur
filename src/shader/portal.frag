@@ -5,10 +5,7 @@ precision highp float;
 uniform float u_frames;
 
 in vec3 v_position;
-in vec3 v_normal;
 in vec2 v_uv;
-in vec3 v_surfaceToView;
-in vec3 v_viewPosition;
 
 out vec4 outColor;
 
@@ -93,48 +90,11 @@ float snoise(vec3 v){
                                 dot(p2,x2), dot(p3,x3) ) );
 }
 
-float sparkle(vec2 p, float seed) {
-    vec2 id = floor(p);
-    vec2 suv = fract(p) * 2. - 1.;
-    
-    float r = hash(id);
-    float x = fract(r * 54.32);
-    float y = fract(r * 432.33);
-    vec2 offs = vec2(x, y) * 2. - 1.;
-    
-    float d = length(suv - offs);
-    float m = 1. - smoothstep(.0, .12, d);
-    
-    m *= pow(sin(seed + r), 5.);
-    return abs(m);
-}
 
 void main() {
     vec3 pos = v_position;
-    vec3 n = normalize(v_normal);
-    vec3 v = normalize(v_surfaceToView);
-    vec3 l = vec3(0., 1., 0.);
-
-    float nDL = dot(n, l);
-
-    // calculate the reflection vector
-    float nDv = dot(n, v);
-    vec3 r = nDv * n * 2. - v;
-    r = normalize(r);
-
-    // fade the color to black by the distance from the center
-    float fade = 1. - smoothstep(0.2, 1., length(pos.xy) * 0.25);
-    float sparkleFade = 1. - smoothstep(0.9, 1., length(pos.xy) * 0.25);
-
-    // surface shade
-    float shade = nDL * 0.8 + (snoise(r * .5)) * 0.3;
-    shade *= 0.7;
-
-    // create the sand sparkle effect
-    float t = u_frames * 0.0;
-    float sLayer1 = sparkle(pos.xy * 6., t + abs(dot(r + v_viewPosition * 0.01, vec3(10.))));
-    float sLayer2 = sparkle(pos.xy * 12., t + abs(dot(r + v_viewPosition * 0.01, vec3(9.))));
-
-    outColor = vec4(vec3(shade * shade * fade + sLayer1 * sparkleFade + sLayer2 * sparkleFade * 0.7), 1.);
-    outColor.rgb += r * 0.02;
+    float n = snoise(vec3(vec2(v_uv.x * 0.001, v_uv.y * 2. - u_frames * 0.008) * 2., u_frames * 0.01)) * 2. - 1.;
+    vec3 color = vec3(0.); //vec3(0.8, 0.9, 1.) * (n * 0.5);
+    outColor = vec4(color, .7);
+    outColor = vec4(0.6, 0.8, 0.8, 1.) * 0.7;
 }

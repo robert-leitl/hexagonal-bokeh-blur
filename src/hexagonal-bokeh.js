@@ -1,13 +1,18 @@
 
 import { mat4, quat, vec3 } from 'gl-matrix';
+import { OrbitControl } from './orbit-control';
+import { simplex2 } from './noise';
 
 import drawVertShaderSource from './shader/draw.vert';
 import drawFragShaderSource from './shader/draw.frag';
+import portalVertShaderSource from './shader/portal.vert';
+import portalFragShaderSource from './shader/portal.frag';
 import compositeVertShaderSource from './shader/composite.vert';
 import compositeFragShaderSource from './shader/composite.frag';
-import { OrbitControl } from './orbit-control';
-import { simplex2 } from './noise';
-import WorleyNoise from './worley-noise';
+import hexBlur1VertShaderSource from './shader/hex-blur-1.vert';
+import hexBlur1FragShaderSource from './shader/hex-blur-1.frag';
+import hexBlur2VertShaderSource from './shader/hex-blur-2.vert';
+import hexBlur2FragShaderSource from './shader/hex-blur-2.frag';
 
 export class HexagonalBokeh {
     oninit;
@@ -19,8 +24,8 @@ export class HexagonalBokeh {
 
     camera = {
         matrix: mat4.create(),
-        near: 1,
-        far: 500,
+        near: 80,
+        far: 350,
         distance: 150,
         orbit: quat.create(),
         position: vec3.create(),
@@ -29,8 +34,8 @@ export class HexagonalBokeh {
     };
 
     blur = {
-        radius: 10,
-        scale: 1
+        radius: 7,
+        scale: 2
     }
 
     constructor(canvas, pane, oninit = null) {
@@ -90,9 +95,22 @@ export class HexagonalBokeh {
         gl.uniformMatrix4fv(this.drawLocations.u_projectionMatrix, false, this.drawUniforms.u_projectionMatrix);
         gl.uniformMatrix4fv(this.drawLocations.u_worldInverseTransposeMatrix, false, this.drawUniforms.u_worldInverseTransposeMatrix);
         gl.uniform3f(this.drawLocations.u_cameraPosition, this.camera.position[0], this.camera.position[1], this.camera.position[2]);
+        gl.uniform1f(this.drawLocations.u_frames, this.#frames);
         gl.clearBufferfv(gl.COLOR, 0, [0.0, 0.0, 0.0, 0.0]);
         gl.clearBufferfv(gl.DEPTH, 0, [1.]);
         gl.drawElements(gl.TRIANGLES, this.objectBuffers.numElem, gl.UNSIGNED_SHORT, 0);
+        // draw the portal triangle on top
+        gl.enable(gl.BLEND);
+        gl.blendFunc(gl.ONE, gl.SRC_COLOR);
+        gl.blendEquation(gl.FUNC_SUBTRACT);
+        gl.useProgram(this.portalProgram);
+        gl.bindVertexArray(this.centerObjectVAO);
+        gl.uniformMatrix4fv(this.portalLocations.u_worldMatrix, false, this.portalUniforms.u_worldMatrix);
+        gl.uniformMatrix4fv(this.portalLocations.u_viewMatrix, false, this.drawUniforms.u_viewMatrix);
+        gl.uniformMatrix4fv(this.portalLocations.u_projectionMatrix, false, this.drawUniforms.u_projectionMatrix);
+        gl.uniform1f(this.portalLocations.u_frames, this.#frames);
+        gl.drawArrays(gl.TRIANGLES, 0, this.centerObjectBuffers.numElem);
+        gl.disable(gl.BLEND);
         this.#setFramebuffer(gl, null, gl.drawingBufferWidth, gl.drawingBufferHeight);
 
         // blit depth and color
@@ -104,6 +122,41 @@ export class HexagonalBokeh {
         gl.blitFramebuffer(0, 0, this.drawFramebufferWidth, this.drawFramebufferHeight, 0, 0, this.drawFramebufferWidth, this.drawFramebufferHeight, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
         this.#setFramebuffer(gl, null, gl.drawingBufferWidth, gl.drawingBufferHeight);
 
+        // render first blur pass
+        this.#renderBlurPass(
+            this.hexBlur1Framebuffer, 
+            this.drawFramebufferWidth, this.drawFramebufferHeight, 
+            this.hexBlur1Program,
+            [
+                [this.hexBlur1Locations.u_colorTexture, this.colorTexture],
+                [this.hexBlur1Locations.u_depthTexture, this.depthTexture]
+            ],
+            [
+                [this.hexBlur1Locations.u_radiusScale, this.blur.scale]
+            ],
+            [
+                [this.hexBlur1Locations.u_maxCoCRadius, this.blur.radius]
+            ]
+        );
+
+        // render second blur pass
+        this.#renderBlurPass(
+            this.hexBlur2Framebuffer, 
+            this.drawFramebufferWidth, this.drawFramebufferHeight, 
+            this.hexBlur2Program,
+            [
+                [this.hexBlur2Locations.u_verticalBlurTexture, this.hex1VerticalBlurTexture],
+                [this.hexBlur2Locations.u_diagonalBlurTexture, this.hex1DiagonalBlurTexture],
+                [this.hexBlur2Locations.u_depthTexture, this.depthTexture]
+            ],
+            [
+                [this.hexBlur2Locations.u_radiusScale, this.blur.scale]
+            ],
+            [
+                [this.hexBlur2Locations.u_maxCoCRadius, this.blur.radius]
+            ]
+        );
+
         // draw to the canvas
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
@@ -111,9 +164,37 @@ export class HexagonalBokeh {
         gl.bindVertexArray(this.quadVAO);
         gl.uniform1i(this.compositeLocations.u_texture, 0);
         gl.activeTexture(gl.TEXTURE0);
-        gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
+        gl.bindTexture(gl.TEXTURE_2D, this.hex2BlurTexture);
         gl.drawArrays(gl.TRIANGLES, 0, this.quadBuffers.numElem);
     }
+
+    #renderBlurPass(fbo, w, h, program, locTex, locFloat = [], locInt = []) {
+        /** @type {WebGLRenderingContext} */
+        const gl = this.gl;
+
+       this.#setFramebuffer(gl, fbo, w, h);
+       gl.useProgram(program);
+       gl.clearColor(0, 0, 0, 1);
+       gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+       gl.bindVertexArray(this.quadVAO);
+
+       locTex.forEach(([loc, texture], ndx) => {
+           gl.uniform1i(loc, ndx);
+           gl.activeTexture(gl[`TEXTURE${ndx}`]);
+           gl.bindTexture(gl.TEXTURE_2D, texture);
+       });
+
+       locFloat.forEach(([loc, value]) => {
+           gl.uniform1f(loc, value);
+       });
+
+       locInt.forEach(([loc, value]) => {
+           gl.uniform1i(loc, value);
+       });
+
+       gl.drawArrays(gl.TRIANGLES, 0, this.quadBuffers.numElem);
+       this.#setFramebuffer(gl, null, gl.drawingBufferWidth, gl.drawingBufferHeight);
+   }
 
     destroy() {
         this.#isDestroyed = true;
@@ -133,6 +214,9 @@ export class HexagonalBokeh {
 
         // setup programs
         this.drawProgram = this.#createProgram(gl, [drawVertShaderSource, drawFragShaderSource]);
+        this.portalProgram = this.#createProgram(gl, [portalVertShaderSource, portalFragShaderSource]);
+        this.hexBlur1Program = this.#createProgram(gl, [hexBlur1VertShaderSource, hexBlur1FragShaderSource], null, { a_position: 0 });
+        this.hexBlur2Program = this.#createProgram(gl, [hexBlur2VertShaderSource, hexBlur2FragShaderSource], null, { a_position: 0 });
         this.compositeProgram = this.#createProgram(gl, [compositeVertShaderSource, compositeFragShaderSource], null, { a_position: 0 });
 
         // find the locations
@@ -140,12 +224,35 @@ export class HexagonalBokeh {
             a_position: gl.getAttribLocation(this.drawProgram, 'a_position'),
             a_normal: gl.getAttribLocation(this.drawProgram, 'a_normal'),
             a_uv: gl.getAttribLocation(this.drawProgram, 'a_uv'),
-            a_instanceMatrix: gl.getAttribLocation(this.drawProgram, 'a_instanceMatrix'),
             u_worldMatrix: gl.getUniformLocation(this.drawProgram, 'u_worldMatrix'),
             u_viewMatrix: gl.getUniformLocation(this.drawProgram, 'u_viewMatrix'),
             u_projectionMatrix: gl.getUniformLocation(this.drawProgram, 'u_projectionMatrix'),
             u_worldInverseTransposeMatrix: gl.getUniformLocation(this.drawProgram, 'u_worldInverseTransposeMatrix'),
-            u_cameraPosition: gl.getUniformLocation(this.drawProgram, 'u_cameraPosition')
+            u_cameraPosition: gl.getUniformLocation(this.drawProgram, 'u_cameraPosition'),
+            u_frames: gl.getUniformLocation(this.drawProgram, 'u_frames')
+        };
+        this.portalLocations = {
+            a_position: gl.getAttribLocation(this.portalProgram, 'a_position'),
+            a_uv: gl.getAttribLocation(this.portalProgram, 'a_uv'),
+            u_worldMatrix: gl.getUniformLocation(this.portalProgram, 'u_worldMatrix'),
+            u_viewMatrix: gl.getUniformLocation(this.portalProgram, 'u_viewMatrix'),
+            u_projectionMatrix: gl.getUniformLocation(this.portalProgram, 'u_projectionMatrix'),
+            u_frames: gl.getUniformLocation(this.portalProgram, 'u_frames')
+        };
+        this.hexBlur1Locations = {
+            a_position: gl.getAttribLocation(this.hexBlur1Program, 'a_position'),
+            u_colorTexture: gl.getUniformLocation(this.hexBlur1Program, 'u_colorTexture'),
+            u_depthTexture: gl.getUniformLocation(this.hexBlur1Program, 'u_depthTexture'),
+            u_maxCoCRadius: gl.getUniformLocation(this.hexBlur1Program, 'u_maxCoCRadius'),
+            u_radiusScale: gl.getUniformLocation(this.hexBlur1Program, 'u_radiusScale')
+        };
+        this.hexBlur2Locations = {
+            a_position: gl.getAttribLocation(this.hexBlur2Program, 'a_position'),
+            u_verticalBlurTexture: gl.getUniformLocation(this.hexBlur2Program, 'u_verticalBlurTexture'),
+            u_diagonalBlurTexture: gl.getUniformLocation(this.hexBlur2Program, 'u_diagonalBlurTexture'),
+            u_depthTexture: gl.getUniformLocation(this.hexBlur2Program, 'u_depthTexture'),
+            u_maxCoCRadius: gl.getUniformLocation(this.hexBlur2Program, 'u_maxCoCRadius'),
+            u_radiusScale: gl.getUniformLocation(this.hexBlur2Program, 'u_radiusScale')
         };
         this.compositeLocations = {
             a_position: gl.getAttribLocation(this.compositeProgram, 'a_position'),
@@ -163,19 +270,21 @@ export class HexagonalBokeh {
         mat4.scale(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, [50, 50, 50]);
         mat4.translate(this.drawUniforms.u_worldMatrix, this.drawUniforms.u_worldMatrix, [0, 0, 0]);
 
+        this.portalUniforms = {
+            u_worldMatrix: mat4.create()
+        }
+        mat4.translate(this.portalUniforms.u_worldMatrix, this.portalUniforms.u_worldMatrix, [0, 5, 0]);
+
         /////////////////////////////////// GEOMETRY / MESH SETUP
 
         // create object VAO
-        const wNoise = new WorleyNoise({numPoints: 30});
         const size = 8;
-        this.objectGeometry = this.#createXYPlaneGeometry(size, size, 100, 100, (p) => {
+        this.objectGeometry = this.#createXYPlaneGeometry(size, size, 110, 110, (p) => {
             const maxHeight = 0.4;
             const scale = 0.9;
             const n = simplex2(p.x * scale, p.y * scale);
-            const wn = wNoise.getEuclidean({ x: (p.x + (size / 2)) / size, y: (p.y + (size / 2)) / size }, 1);
             const l = vec3.length([p.x, p.y, p.z]);
             let lw = (l / 4) * 1.;
-            //lw *= lw * lw;
             const c = Math.sin(Math.acos(p.x / 5)) * Math.cos(Math.asin(p.y / 5));
             return {x: p.x, y: p.y, z: n * maxHeight * lw - c * 6.5 + 5.3 } 
         });
@@ -202,6 +311,24 @@ export class HexagonalBokeh {
             numElem: quadPositions.length / 2
         };
         this.quadVAO = this.#makeVertexArray(gl, [[this.quadBuffers.position, this.drawLocations.a_position, 2]]);
+
+        // create center triangle VAO
+        const pR = 30;
+        const rot = -Math.PI / 2;
+        const centerObjectPositions = [
+            Math.cos(0 + rot) * pR, Math.sin(0 + rot) * pR, 0,
+            Math.cos(2 * Math.PI / 3 + rot) * pR, Math.sin(2 * Math.PI / 3 + rot) * pR, 0,
+            Math.cos(4 * Math.PI / 3 + rot) * pR, Math.sin(4 * Math.PI / 3 + rot) * pR, 0
+        ];
+        this.centerObjectBuffers = {
+            position: this.#createBuffer(gl, centerObjectPositions),
+            uv: this.#createBuffer(gl, [0, 0, 0, 1, 1, 1]),
+            numElem: centerObjectPositions.length / 3
+        };
+        this.centerObjectVAO = this.#makeVertexArray(gl, [
+            [this.centerObjectBuffers.position, this.portalLocations.a_position, 3],
+            [this.centerObjectBuffers.uv, this.portalLocations.a_uv, 2]
+        ]);
 
         // initial client dimensions
         const clientWidth = gl.canvas.clientWidth;
@@ -252,10 +379,26 @@ export class HexagonalBokeh {
 
         /////////////////////////////////// FIRST BLUR PASS SETUP
 
+        this.hex1VerticalBlurTexture = this.#createAndSetupTexture(gl, gl.LINEAR, gl.LINEAR);
+        gl.bindTexture(gl.TEXTURE_2D, this.hex1VerticalBlurTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.drawFramebufferWidth, this.drawFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        this.hex1DiagonalBlurTexture = this.#createAndSetupTexture(gl, gl.LINEAR, gl.LINEAR);
+        gl.bindTexture(gl.TEXTURE_2D, this.hex1DiagonalBlurTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.drawFramebufferWidth, this.drawFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        this.hexBlur1Framebuffer = this.#createFramebuffer(gl, [this.hex1VerticalBlurTexture, this.hex1DiagonalBlurTexture]);
+        if(gl.checkFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) {
+            console.error('could not complete blur hexagonal first pass framebuffer setup')
+        }
 
         /////////////////////////////////// SECOND BLUR PASS SETUP
 
-
+        this.hex2BlurTexture = this.#createAndSetupTexture(gl, gl.LINEAR, gl.LINEAR);
+        gl.bindTexture(gl.TEXTURE_2D, this.hex2BlurTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.drawFramebufferWidth, this.drawFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        this.hexBlur2Framebuffer = this.#createFramebuffer(gl, [this.hex2BlurTexture]);
+        if(gl.checkFramebufferStatus(gl.FRAMEBUFFER) != gl.FRAMEBUFFER_COMPLETE) {
+            console.error('could not complete blur hexagonal second pass framebuffer setup')
+        }
 
         this.resize();
 
@@ -470,8 +613,6 @@ export class HexagonalBokeh {
         const clientHeight = gl.canvas.clientHeight;
         this.drawFramebufferWidth = clientWidth;
         this.drawFramebufferHeight = clientHeight;
-        this.dofFramebufferWidth = clientWidth * this.DOF_TEXTURE_SCALE;
-        this.dofFramebufferHeight = clientHeight * this.DOF_TEXTURE_SCALE;
 
         // resize draw/blit textures and buffers
         gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRenderbuffer);
@@ -483,19 +624,13 @@ export class HexagonalBokeh {
         gl.bindTexture(gl.TEXTURE_2D, this.colorTexture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, clientWidth, clientHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
 
-        // resize dof packed texture
-        /*gl.bindTexture(gl.TEXTURE_2D, this.dofPackedTexture);
+        // resize blur texture
+        gl.bindTexture(gl.TEXTURE_2D, this.hex1VerticalBlurTexture);
         gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.drawFramebufferWidth, this.drawFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-
-        // resize dof blur textures
-        gl.bindTexture(gl.TEXTURE_2D, this.dofBlurHNearTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.dofFramebufferWidth, this.dofFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        gl.bindTexture(gl.TEXTURE_2D, this.dofBlurHMidFarTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.dofFramebufferWidth, this.dofFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        gl.bindTexture(gl.TEXTURE_2D, this.dofBlurVNearTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.dofFramebufferWidth, this.dofFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
-        gl.bindTexture(gl.TEXTURE_2D, this.dofBlurVMidFarTexture);
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.dofFramebufferWidth, this.dofFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);*/
+        gl.bindTexture(gl.TEXTURE_2D, this.hex1DiagonalBlurTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.drawFramebufferWidth, this.drawFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+        gl.bindTexture(gl.TEXTURE_2D, this.hex2BlurTexture);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, this.drawFramebufferWidth, this.drawFramebufferHeight, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
         
         // reset bindings
         gl.bindRenderbuffer(gl.RENDERBUFFER, null);
