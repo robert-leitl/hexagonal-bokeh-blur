@@ -446,12 +446,12 @@ export class HexagonalBokeh {
                     x2 = distort(x2);
                     y1 = distort(y1);
                     y2 = distort(y2);
-                    t = vec3.fromValues(
+                    let t = vec3.fromValues(
                         x2.x - x1.x,
                         x2.y - x1.y,
                         x2.z - x1.z
                     );
-                    b = vec3.fromValues(
+                    let b = vec3.fromValues(
                         y2.x - y1.x,
                         y2.y - y1.y,
                         y2.z - y1.z
