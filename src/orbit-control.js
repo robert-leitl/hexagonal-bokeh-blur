@@ -13,6 +13,8 @@ export class OrbitControl {
         this.camera = camera;
         this.updateCallback = updateCallback;
 
+        canvas.style.touchAction = 'none';
+
         canvas.addEventListener('pointerdown', e => {
             this.pointerDownPos = { x: e.clientX, y: e.clientY }
             this.followPos = { x: e.clientX, y: e.clientY }
