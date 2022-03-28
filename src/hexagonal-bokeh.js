@@ -213,8 +213,8 @@ export class HexagonalBokeh {
         ///////////////////////////////////  PROGRAM SETUP
 
         // setup programs
-        this.drawProgram = this.#createProgram(gl, [drawVertShaderSource, drawFragShaderSource]);
-        this.portalProgram = this.#createProgram(gl, [portalVertShaderSource, portalFragShaderSource]);
+        this.drawProgram = this.#createProgram(gl, [drawVertShaderSource, drawFragShaderSource], null, { a_position: 0, a_normal: 1, a_uv: 2 });
+        this.portalProgram = this.#createProgram(gl, [portalVertShaderSource, portalFragShaderSource], null, { a_position: 0, a_uv: 2 });
         this.hexBlur1Program = this.#createProgram(gl, [hexBlur1VertShaderSource, hexBlur1FragShaderSource], null, { a_position: 0 });
         this.hexBlur2Program = this.#createProgram(gl, [hexBlur2VertShaderSource, hexBlur2FragShaderSource], null, { a_position: 0 });
         this.compositeProgram = this.#createProgram(gl, [compositeVertShaderSource, compositeFragShaderSource], null, { a_position: 0 });
