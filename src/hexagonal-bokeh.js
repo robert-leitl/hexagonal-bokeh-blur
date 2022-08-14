@@ -618,7 +618,7 @@ export class HexagonalBokeh {
 
         // resize draw/blit textures and buffers
         gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRenderbuffer);
-        gl.renderbufferStorageMultisample(gl.RENDERBUFFER, 4, gl.DEPTH_COMPONENT32F, clientWidth, clientHeight);
+        gl.renderbufferStorageMultisample(gl.RENDERBUFFER, gl.getParameter(gl.MAX_SAMPLES), gl.DEPTH_COMPONENT32F, clientWidth, clientHeight);
         gl.bindRenderbuffer(gl.RENDERBUFFER, this.colorRenderbuffer);
         gl.renderbufferStorageMultisample(gl.RENDERBUFFER, gl.getParameter(gl.MAX_SAMPLES), gl.RGBA8, clientWidth, clientHeight);
         gl.bindTexture(gl.TEXTURE_2D, this.depthTexture);
