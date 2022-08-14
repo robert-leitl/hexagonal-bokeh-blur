@@ -349,7 +349,7 @@ export class HexagonalBokeh {
         // depth render buffer setup
         this.depthRenderbuffer = gl.createRenderbuffer();
         gl.bindRenderbuffer(gl.RENDERBUFFER, this.depthRenderbuffer);
-        gl.renderbufferStorageMultisample(gl.RENDERBUFFER, 4, gl.DEPTH_COMPONENT32F, this.drawFramebufferWidth, this.drawFramebufferHeight);
+        gl.renderbufferStorageMultisample(gl.RENDERBUFFER, gl.getParameter(gl.MAX_SAMPLES), gl.DEPTH_COMPONENT32F, this.drawFramebufferWidth, this.drawFramebufferHeight);
         gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, this.depthRenderbuffer);
         // color renderbuffer setup
         this.colorRenderbuffer = gl.createRenderbuffer();
